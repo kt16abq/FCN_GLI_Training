@@ -1,0 +1,69 @@
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+
+import numpy as np
+
+kernel_dims = [64, 64]
+
+
+nclasses = 4
+
+
+
+def create_bilinear_kernels(num_classes, kernel_dims = [64,64]):
+    """Creates a 2D bilinear distribution for initializing the weights for transposed convolution."""
+    """Output: NumPy array with dimensions: [kernel_dims[0] x kernel_dims[1] x num_classes x num_classes]"""
+    def find_params(size):
+        """For odd size: take the mid pixel as the center, for even size: take two adjacent pixels as the center."""
+        divisor = np.floor((size + 1) / 2.0)
+        if size%2==0:
+            center = divisor - 0.5
+        else:
+            center = divisor - 1
+        return divisor,center
+
+    height,width = kernel_dims
+    
+    # Determine the center and the divisor for height and width
+    divisor_height,center_height = find_params(height)
+    divisor_width,center_width = find_params(width)
+    
+    # Create one kernel with ones in the center, and decrease the value further away we move from there:
+    grid = np.ogrid[:height, :width]
+    filter_coefficients = (1.0 - abs(grid[0] - center_height) / divisor_height) * (1.0 - abs(grid[1] - center_width) / divisor_width)
+    # Now put everything into a NumPy array in the required float32 precision (shape: [height x width])
+    one_plane = np.array(filter_coefficients, dtype=np.float32)
+    # For each input feature map to each output feature map, 
+    # we will use transposed convolution with a kernel of [height x width].
+    # There are num_classes input feature maps and also num_classes output feature maps.
+    # Hence we will first initialize a NumPy array with dimensionality [height x width x num_classes x num_classes]...
+    all_planes = np.zeros((height,
+                width,
+                num_classes,
+                num_classes), dtype=np.float32)
+
+    # ... and then copy one_plane to all num_classes x num_classes entries in the last two dimensions.
+    for i in range(num_classes):
+        for j in range(num_classes):
+            all_planes[:, :, i, j] = one_plane
+    return all_planes
+
+
+
+# Draw the weights for initializing one kernel
+bilinear_kernels = create_bilinear_kernels(nclasses, kernel_dims)
+plt.imshow(bilinear_kernels[:,:,0,0])
+plt.suptitle("One kernel with dimensions %d x %d" %(kernel_dims[0],kernel_dims[1]), fontsize=15)
+plt.show() 
+
+# Draw the miniatures of the weights for initializing all kernels
+fig, axes = plt.subplots(ncols=nclasses, nrows=nclasses)
+fig.suptitle(("All %d x %d kernels" %(nclasses,nclasses)), fontsize=15)
+for row in range(nclasses):
+    for col in range(nclasses):
+        axes[row, col].imshow(bilinear_kernels[:,:,row,col])
+        axes[row, col].get_xaxis().set_visible(False)
+        axes[row, col].get_yaxis().set_visible(False)
+plt.show()
