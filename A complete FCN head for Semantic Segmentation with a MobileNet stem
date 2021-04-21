@@ -1,0 +1,98 @@
+def add_fcn_head(net, num_classes, input_shape, is_training, kernel=[7,7], depth=1024):
+    """Adds a very simple fully convolutional head to the network specified with net."""
+    """num_classes defines the target output depth of the upsampling layer and the last point-wise convolution layer before that."""
+    """input_shape shape is needed for determining the target dimensionality after upsampling."""
+    """is_training indicates if we have to initialize the weights."""
+    """kernel determines the size of the first convolution layer's filter."""
+    """depth is the parameter for the number of the point-wise convolution layers' filters in this FCN head."""
+    
+    # This is the Depth-wise Convolution block:
+    # First the Separable Convolution layer with the specified kernel, 
+    # taking the output from the MobileNet stem as an input...
+    # Input shape: [10 x 15 x (1024*depth_multiplier from MobileNet stem)]
+    # Output shape: [10 x 15 x 1024*depth_multiplier from MobileNet stem)]
+    conv1_separable = slim.separable_conv2d(net, None, kernel,
+        depth_multiplier=1.0,
+        stride=[1,1],
+        normalizer_fn=slim.batch_norm,
+        scope='conv1_separable')
+    # ... and the following Point-wise Convolution layer.
+    # Input shape: [10 x 15 x (1024*depth_multiplier from MobileNet stem)]
+    # Output shape: [10 x 15 x depth]
+    conv1_pointwise = slim.conv2d(net, depth, [1, 1], 1, scope='conv1_pointwise')
+    
+    # Let's use Dropout layer with a common Dropout ratio of 0.5 for regularization.
+    # Input shape: [10 x 15 x depth]
+    # Output shape: [10 x 15 x depth]
+    dropout_keep_prob=0.5
+    dropout = slim.dropout(conv1_pointwise, dropout_keep_prob, is_training=is_training, scope='dropout')
+    
+    # The 1x1 Convolution layer, used as a classifier with num_classes output feature maps.
+    # Input shape: [10 x 15 x depth]
+    # Output shape: [10 x 15 x num_classes]
+    conv2_classifier = slim.conv2d(dropout, num_classes, [1, 1], 1, scope='conv2_classifier')
+    
+    # The Transposed Convolution Layer, upsampling from 10 x 15 to the original input image resolution of 320 x 480.
+    # Input shape: [10 x 15 x num_classes]
+    # Output shape: [320 x 480 x num_classes]
+    
+    # This is a fixed setting which can only upsample by a factor of 32.
+    # Let's first assert that this condition is met:
+    current_shape = net.get_shape().as_list()
+    factor_height = input_shape[1]/current_shape[1]
+    factor_width = input_shape[2]/current_shape[2]
+    upsampling_factor = 32
+    assert(factor_height==factor_width==upsampling_factor)
+    
+    # upsample_kernel_size = upsampling_factor * 2
+    upsample_kernel_size = 64
+    
+    if is_training:
+        # Only initialize the kernel weights with a bilinear distribution if we start from scratch during training.
+        filter_coefficients = create_bilinear_kernels(num_classes, [upsample_kernel_size, upsample_kernel_size])
+    else:
+        # Otherwise, just use zeros because we will reuse the pre-trained weights of a snapshot for inference.
+        filter_coefficients = [0]
+        
+    # upsample_stride = upsampling_factor
+    upsample_stride = 32
+    
+    upsampler = slim.conv2d_transpose(conv2_classifier, num_classes, 
+        kernel_size = [upsample_kernel_size, upsample_kernel_size],
+        stride=[upsample_stride, upsample_stride],
+        scope='upsampler',
+        padding='SAME', # Note: With slim.conv2d_transpose, the padding will be calculated automatically.
+        weights_initializer=tf.constant_initializer(filter_coefficients),
+        trainable=True,
+        activation_fn=None) # Softmax will only be applied during training. For inference, we can use argmax.
+    return upsampler
+
+
+def mobilenet_fcn(input_tensor, num_classes, is_training=True, depth_multiplier=1.0, classifier_kernel=[7,7], classifier_depth=1024):
+    input_shape  = input_tensor.get_shape().as_list()
+    with slim.arg_scope([slim.conv2d, slim.separable_conv2d],
+                        weights_initializer=tf.contrib.layers.xavier_initializer(),
+                        weights_regularizer=slim.l2_regularizer(1e-6),
+                        padding='SAME'):
+        base,_ = mobilenet_v1_base(input_tensor, scope='MobilenetV1', final_endpoint='Conv2d_13_pointwise', depth_multiplier=depth_multiplier)
+        fcn = add_fcn_head(base, num_classes, input_shape, is_training, kernel=classifier_kernel, depth=classifier_depth)
+        return fcn
+    
+    
+height_fcn = 320 # The height of one input image
+width_fcn = 480 # The width of one input image
+
+
+number_classes_fcn = 4
+
+
+
+my_image_tensor_fcn = tf.placeholder(tf.float32, shape=(1, height_fcn, width_fcn, 3))     
+
+tf.reset_default_graph()
+my_mobilenet_fcn = mobilenet_fcn(input_tensor=my_image_tensor_fcn, num_classes=number_classes_fcn)
+
+input_shape_fcn = my_image_tensor_fcn.get_shape().as_list()
+output_shape_fcn = my_mobilenet_fcn.get_shape().as_list()
+print('Input dimensions: ' + str(input_shape_fcn))
+print('Output dimensions: ' + str(output_shape_fcn))
