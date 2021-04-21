@@ -1,0 +1,29 @@
+import logging
+logging.getLogger('tensorflow').disabled = True
+import tensorflow as tf
+from tensorflow.contrib import slim
+from mobilenet_v1 import *
+
+height = 224 # The height of one input image
+width = 224 # The width of one input image
+
+
+# We will replace this placeholder with our training images later
+my_image_tensor = tf.placeholder(tf.float32, shape=(1, height, width, 3))
+
+
+
+my_endpoint = 'Conv2d_13_pointwise'
+
+
+# To prevent multiple graphs being active during one session, we reset the default graph every time we run this snippet
+tf.reset_default_graph()
+my_mobilenet,my_endpoints = mobilenet_v1_base(inputs=my_image_tensor,
+                  final_endpoint=my_endpoint,
+                  depth_multiplier=1.0)
+input_shape = my_image_tensor.get_shape().as_list()
+output_shape = my_mobilenet.get_shape().as_list()
+print('Input dimensions: ' + str(input_shape))
+print('Output dimensions: ' + str(output_shape))
+print('Height downsampling factor: %.1f' % (input_shape[1]/output_shape[1]))
+print('Width downsampling factor: %.1f' % (input_shape[2]/output_shape[2]))
